@@ -22,6 +22,7 @@ struct ContentView: View {
     @Bindable var store: WellnessStore
     @State private var page = Page.today
     @State private var showWorkPopover = false
+    @State private var showCustomForm = false
     @State private var loginItem = LoginItem.shared
     var body: some View {
         HStack(spacing: 0) {
@@ -294,6 +295,7 @@ struct ContentView: View {
                 Toggle("启用", isOn: $reminder.enabled).labelsHidden().toggleStyle(.switch).accessibilityLabel("启用\(reminder.title)")
             }.padding(24).background(.white, in: RoundedRectangle(cornerRadius: 18))
         }
+        customReminderCard
         if !store.rhythmSuggestions.isEmpty {
             rhythmCard
         }
@@ -375,6 +377,115 @@ struct ContentView: View {
         .animation(.easeOut(duration: 0.2), value: store.lunchEnabled)
     }
 
+    // MARK: - 自定义提醒
+
+    private var customReminderCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("自定义提醒").font(.headline)
+                    Text("每天、每周几、每月几号或只提醒一次;到点以居中弹窗出现。").font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button {
+                    showCustomForm = true
+                } label: {
+                    Label("添加提醒", systemImage: "plus")
+                }
+                .buttonStyle(.bordered)
+            }
+
+            if store.customReminders.isEmpty {
+                Text("还没有自定义提醒。适合放吃药、周会、下班拉伸这类固定安排。")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 4)
+            }
+
+            ForEach($store.customReminders) { $reminder in
+                customReminderRow($reminder)
+            }
+        }
+        .padding(20)
+        .background(.white, in: RoundedRectangle(cornerRadius: 18))
+        .sheet(isPresented: $showCustomForm) {
+            CustomReminderForm(store: store)
+        }
+    }
+
+    private func customReminderRow(_ reminder: Binding<CustomReminder>) -> some View {
+        HStack(spacing: 16) {
+            Image(systemName: customSymbol(reminder.wrappedValue.repeatMode))
+                .font(.title3)
+                .foregroundStyle(green)
+                .frame(width: 40, height: 40)
+                .background(Color(red: 0.85, green: 0.92, blue: 0.86), in: RoundedRectangle(cornerRadius: 11))
+            VStack(alignment: .leading, spacing: 6) {
+                Text(reminder.wrappedValue.name).font(.headline)
+                Text(customSubtitle(reminder.wrappedValue)).font(.callout).foregroundStyle(.secondary)
+            }
+            Spacer()
+            if reminder.wrappedValue.enabled, let fire = store.customNextFireDates[reminder.wrappedValue.id] {
+                VStack(alignment: .trailing, spacing: 3) {
+                    Text("下次提醒").font(.system(size: 10)).tracking(1).foregroundStyle(.secondary)
+                    Text(fire, style: .timer)
+                        .font(.system(size: 17, weight: .medium, design: .rounded).monospacedDigit())
+                        .foregroundStyle(green)
+                        .contentTransition(.numericText())
+                }
+                .frame(minWidth: 72, alignment: .trailing)
+                .padding(.trailing, 8)
+                .help("距离下一次「\(reminder.wrappedValue.name)」提醒")
+            }
+            Toggle("启用", isOn: reminder.enabled)
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .accessibilityLabel("启用\(reminder.wrappedValue.name)")
+            Button {
+                store.removeCustomReminder(reminder.wrappedValue.id)
+            } label: {
+                Image(systemName: "trash")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.borderless)
+            .accessibilityLabel("删除\(reminder.wrappedValue.name)")
+        }
+        .padding(16)
+        .background(Color(red: 0.97, green: 0.98, blue: 0.97), in: RoundedRectangle(cornerRadius: 14))
+    }
+
+    /// 行内副标题:每天 09:00 / 每周三、周五 18:30 / 每月1日、15日 09:00 / 9月15日 10:00(已过期)。
+    private func customSubtitle(_ reminder: CustomReminder) -> String {
+        let time = String(format: "%02d:%02d", reminder.minuteOfDay / 60, reminder.minuteOfDay % 60)
+        switch reminder.repeatMode {
+        case .once:
+            guard let fire = reminder.fireDate else { return "未设置时间" }
+            let text = fire.formatted(
+                .dateTime.locale(Locale(identifier: "zh_CN")).month().day().hour().minute()
+            )
+            return fire > .now ? text : "\(text) · 已过期"
+        case .daily:
+            return "每天 \(time)"
+        case .weekly:
+            let names = ["日", "一", "二", "三", "四", "五", "六"]
+            let days = reminder.weekdays.sorted().map { names[$0 - 1] }.joined(separator: "、")
+            return "每周\(days) \(time)"
+        case .monthly:
+            let days = reminder.monthDays.sorted().map { "\($0)日" }.joined(separator: "、")
+            return "每月\(days) \(time)"
+        }
+    }
+
+    private func customSymbol(_ mode: RepeatMode) -> String {
+        switch mode {
+        case .daily: "clock.arrow.circlepath"
+        case .weekly: "calendar"
+        case .monthly: "calendar.circle"
+        case .once: "calendar.badge.clock"
+        }
+    }
+
     private var rhythmCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             Label("节奏小建议", systemImage: "waveform.path.ecg")
@@ -409,142 +520,6 @@ struct ContentView: View {
             guard record.kind == "water", let amount = record.amount else { return title }
             return "\(title) · \(amount) ml"
         }
-    }
-}
-
-/// 温和版时间选择：胶囊显示「HH:MM」，点开是时/分两根滚轮的气泡。
-private struct GentleTimePicker: View {
-    let label: String
-    @Binding var minutes: Int
-    @State private var isPresented = false
-
-    private var hour: Int { minutes / 60 % 24 }
-    private var minute: Int { minutes % 60 }
-
-    /// 分钟按 5 分钟一档；历史值不在档上时也把它列进去，避免滚轮空选。
-    private var minuteValues: [Int] {
-        var values = Array(stride(from: 0, to: 60, by: 5))
-        if !values.contains(minute) {
-            values.append(minute)
-            values.sort()
-        }
-        return values
-    }
-
-    private var hourBinding: Binding<Int> {
-        Binding(get: { hour }, set: { minutes = $0 * 60 + minute })
-    }
-
-    private var minuteBinding: Binding<Int> {
-        Binding(get: { minute }, set: { minutes = hour * 60 + $0 })
-    }
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Text(label)
-                .font(.callout)
-                .foregroundStyle(.secondary)
-            Button {
-                isPresented = true
-            } label: {
-                HStack(spacing: 6) {
-                    Text(String(format: "%02d:%02d", hour, minute))
-                        .font(.system(size: 15, weight: .semibold, design: .rounded).monospacedDigit())
-                        .foregroundStyle(ink)
-                    Image(systemName: "chevron.up.chevron.down")
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundStyle(.tertiary)
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 5)
-                .background(green.opacity(0.08), in: Capsule())
-                .overlay {
-                    Capsule().stroke(isPresented ? green.opacity(0.5) : green.opacity(0.16))
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .popover(isPresented: $isPresented, arrowEdge: .bottom) {
-                wheels
-                    .padding(16)
-                    .frame(minWidth: 196)
-            }
-        }
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(label)时间")
-        .accessibilityValue(String(format: "%02d:%02d", hour, minute))
-    }
-
-    private var wheels: some View {
-        HStack(spacing: 4) {
-            WheelColumn(values: Array(0..<24), selection: hourBinding)
-            Text(":")
-                .font(.system(size: 15, weight: .semibold, design: .rounded))
-                .foregroundStyle(.tertiary)
-            WheelColumn(values: minuteValues, selection: minuteBinding)
-        }
-    }
-}
-
-/// 自绘滚轮列：点击一行即选中并居中，上下边缘淡出，中间一行带高亮条。
-private struct WheelColumn: View {
-    let values: [Int]
-    @Binding var selection: Int
-
-    private let rowHeight: CGFloat = 44
-
-    var body: some View {
-        ScrollViewReader { proxy in
-            ZStack {
-                RoundedRectangle(cornerRadius: 11)
-                    .fill(Color(red: 0.85, green: 0.92, blue: 0.86).opacity(0.7))
-                    .frame(height: rowHeight)
-                ScrollView(.vertical, showsIndicators: false) {
-                    LazyVStack(spacing: 0) {
-                        Color.clear.frame(height: 44)
-                        ForEach(values, id: \.self) { value in
-                            row(value).id(value)
-                        }
-                        Color.clear.frame(height: 44)
-                    }
-                }
-                .frame(width: 78, height: rowHeight * 3)
-                .clipped()
-                .mask {
-                    LinearGradient(
-                        stops: [
-                            .init(color: .clear, location: 0),
-                            .init(color: .black, location: 0.3),
-                            .init(color: .black, location: 0.7),
-                            .init(color: .clear, location: 1)
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                }
-            }
-            .onAppear {
-                proxy.scrollTo(selection, anchor: .center)
-            }
-            .onChange(of: selection) { _, value in
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    proxy.scrollTo(value, anchor: .center)
-                }
-            }
-        }
-    }
-
-    private func row(_ value: Int) -> some View {
-        Button {
-            selection = value
-        } label: {
-            Text(String(format: "%02d", value))
-                .font(.system(size: 16, weight: selection == value ? .semibold : .regular, design: .rounded).monospacedDigit())
-                .foregroundStyle(selection == value ? ink : .secondary)
-                .frame(width: 72, height: rowHeight)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
     }
 }
 

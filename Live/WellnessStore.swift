@@ -20,6 +20,91 @@ struct Reminder: Identifiable, Codable, Equatable {
     static let intervalLadder = [15, 20, 30, 45, 60, 90, 120]
 }
 
+/// 自定义提醒的重复方式。
+enum RepeatMode: String, Codable, CaseIterable {
+    case daily, weekly, monthly, once
+
+    var label: String {
+        switch self {
+        case .daily: "每天"
+        case .weekly: "每周"
+        case .monthly: "每月"
+        case .once: "单次"
+        }
+    }
+}
+
+/// 自定义提醒:每天/每周几/每月几号的某个时刻重复,或某个具体日期时间只提醒一次。
+struct CustomReminder: Identifiable, Equatable {
+    var id = UUID()
+    var name: String
+    var repeatMode: RepeatMode = .weekly
+    /// 每周提醒:Calendar.weekday 1–7 的集合(1 = 周日)。
+    var weekdays: Set<Int> = []
+    /// 每月提醒:1–31 号的集合;当月没有的日子(如 31)自动跳过。
+    var monthDays: Set<Int> = []
+    /// 一天里的第几分钟(单次提醒也用它表示时刻)。
+    var minuteOfDay = 9 * 60
+    /// 单次提醒的触发时刻。
+    var fireDate: Date?
+    var enabled = true
+
+    init(
+        name: String,
+        repeatMode: RepeatMode = .weekly,
+        weekdays: Set<Int> = [],
+        monthDays: Set<Int> = [],
+        minuteOfDay: Int = 9 * 60,
+        fireDate: Date? = nil,
+        enabled: Bool = true
+    ) {
+        self.name = name
+        self.repeatMode = repeatMode
+        self.weekdays = weekdays
+        self.monthDays = monthDays
+        self.minuteOfDay = minuteOfDay
+        self.fireDate = fireDate
+        self.enabled = enabled
+    }
+}
+
+extension CustomReminder: Codable {
+    enum CodingKeys: String, CodingKey {
+        case id, name, repeatMode, weekdays, monthDays, minuteOfDay, fireDate, enabled, isOneTime
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        name = try c.decode(String.self, forKey: .name)
+        if let mode = try c.decodeIfPresent(RepeatMode.self, forKey: .repeatMode) {
+            repeatMode = mode
+        } else if let legacyOneTime = try c.decodeIfPresent(Bool.self, forKey: .isOneTime) {
+            // 旧版本数据:布尔字段映射到新枚举。
+            repeatMode = legacyOneTime ? .once : .weekly
+        } else {
+            repeatMode = .weekly
+        }
+        weekdays = try c.decodeIfPresent(Set<Int>.self, forKey: .weekdays) ?? []
+        monthDays = try c.decodeIfPresent(Set<Int>.self, forKey: .monthDays) ?? []
+        minuteOfDay = try c.decodeIfPresent(Int.self, forKey: .minuteOfDay) ?? 9 * 60
+        fireDate = try c.decodeIfPresent(Date.self, forKey: .fireDate)
+        enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(name, forKey: .name)
+        try c.encode(repeatMode, forKey: .repeatMode)
+        try c.encode(weekdays, forKey: .weekdays)
+        try c.encode(monthDays, forKey: .monthDays)
+        try c.encode(minuteOfDay, forKey: .minuteOfDay)
+        try c.encodeIfPresent(fireDate, forKey: .fireDate)
+        try c.encode(enabled, forKey: .enabled)
+    }
+}
+
 struct CheckIn: Codable, Identifiable {
     var id = UUID()
     var kind: String
@@ -52,6 +137,13 @@ struct DayTally: Identifiable {
         }
     }
     var records: [CheckIn] { didSet { save() } }
+    var customReminders: [CustomReminder] {
+        didSet {
+            saveCustomReminders()
+            restartCustomTasksIfRunning()
+        }
+    }
+    private(set) var customNextFireDates: [UUID: Date] = [:]
     var nextFireDates: [String: Date] = [:]
     var running = false
     var busy = false
@@ -75,12 +167,14 @@ struct DayTally: Identifiable {
 
     private let defaults = UserDefaults.standard
     private var reminderTasks: [String: Task<Void, Never>] = [:]
+    private var customTasks: [UUID: Task<Void, Never>] = [:]
     private var snoozeTasks: [Task<Void, Never>] = []
     private var bootstrapping = true
 
     init() {
         reminders = Self.read("reminders") ?? Reminder.defaults
         records = Self.read("records") ?? []
+        customReminders = Self.read("customReminders") ?? []
         running = UserDefaults.standard.bool(forKey: "running")
         loadWorkHours()
         loadSnoozeCounts()
@@ -117,8 +211,9 @@ struct DayTally: Identifiable {
             : "\(waterTotal) ml"
     }
 
+    /// 正在计时的提醒总数：内置提醒 + 已启用的自定义提醒。
     var activeReminderCount: Int {
-        reminders.filter(\.enabled).count
+        reminders.filter(\.enabled).count + customReminders.filter(\.enabled).count
     }
 
     func check(_ kind: String, amount: Int? = nil) {
@@ -220,6 +315,9 @@ struct DayTally: Identifiable {
     func stop() {
         reminderTasks.values.forEach { $0.cancel() }
         reminderTasks.removeAll()
+        customTasks.values.forEach { $0.cancel() }
+        customTasks.removeAll()
+        customNextFireDates.removeAll()
         snoozeTasks.forEach { $0.cancel() }
         snoozeTasks.removeAll()
         nextFireDates.removeAll()
@@ -252,13 +350,13 @@ struct DayTally: Identifiable {
         ReminderPopupController.shared.show(.eyes)
     }
 
-    func snooze(_ kind: String, minutes: Int = 10) {
-        snoozeCountsToday[kind, default: 0] += 1
+    func snooze(_ kind: ReminderPopupKind, minutes: Int = 10) {
+        snoozeCountsToday[kind.key, default: 0] += 1
         persistSnoozeCounts()
         let task = Task { [weak self] in
             try? await Task.sleep(for: .seconds(Double(minutes * 60)))
             guard !Task.isCancelled, let self else { return }
-            self.showReminder(kind)
+            ReminderPopupController.shared.enqueue(kind)
         }
         snoozeTasks.append(task)
         notice = "已推迟 \(minutes) 分钟。"
@@ -438,6 +536,97 @@ struct DayTally: Identifiable {
         for reminder in reminders where reminder.enabled {
             restartTask(for: reminder)
         }
+        startCustomTasks()
+    }
+
+    // MARK: - 自定义提醒调度
+
+    private func saveCustomReminders() {
+        defaults.set(try? JSONEncoder().encode(customReminders), forKey: "customReminders")
+    }
+
+    private func restartCustomTasksIfRunning() {
+        guard running, !bootstrapping else { return }
+        startCustomTasks()
+    }
+
+    /// 自定义提醒是绝对时刻,重启任务不会改变触发时间,统一重启最简单。
+    private func startCustomTasks() {
+        customTasks.values.forEach { $0.cancel() }
+        customTasks.removeAll()
+        customNextFireDates.removeAll()
+        for reminder in customReminders where reminder.enabled {
+            restartCustomTask(for: reminder)
+        }
+    }
+
+    private func restartCustomTask(for reminder: CustomReminder) {
+        customTasks[reminder.id]?.cancel()
+        customTasks[reminder.id] = nil
+        let fire = nextFireDate(for: reminder)
+        customNextFireDates[reminder.id] = fire
+        guard fire != nil else { return }
+        customTasks[reminder.id] = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self, let fire = self.nextFireDate(for: reminder) else { return }
+                self.customNextFireDates[reminder.id] = fire
+                try? await Task.sleep(for: .seconds(max(1, fire.timeIntervalSinceNow)))
+                guard !Task.isCancelled else { return }
+                ReminderPopupController.shared.enqueue(.custom(reminder.name))
+                if reminder.repeatMode == .once {
+                    self.removeCustomReminder(reminder.id, fired: true)
+                    return
+                }
+            }
+        }
+    }
+
+    /// 下一次触发时刻:单次看 fireDate;重复的从今天起逐日找第一个匹配的日子与时刻。
+    func nextFireDate(for reminder: CustomReminder) -> Date? {
+        guard reminder.enabled else { return nil }
+        let calendar = Calendar.current
+        guard reminder.repeatMode != .once else {
+            guard let fire = reminder.fireDate else { return nil }
+            return fire > .now ? fire : nil
+        }
+
+        let maxOffset: Int
+        switch reminder.repeatMode {
+        case .daily: maxOffset = 2
+        case .weekly:
+            guard !reminder.weekdays.isEmpty else { return nil }
+            maxOffset = 8
+        case .monthly:
+            guard !reminder.monthDays.isEmpty else { return nil }
+            maxOffset = 62   // 只选 31 号时可能隔月(如 1月31日 → 3月31日)
+        case .once: return nil
+        }
+
+        let now = Date.now
+        for offset in 0...maxOffset {
+            guard let day = calendar.date(byAdding: .day, value: offset, to: now) else { continue }
+            switch reminder.repeatMode {
+            case .weekly:
+                guard reminder.weekdays.contains(calendar.component(.weekday, from: day)) else { continue }
+            case .monthly:
+                guard reminder.monthDays.contains(calendar.component(.day, from: day)) else { continue }
+            default: break
+            }
+            var comps = calendar.dateComponents([.year, .month, .day], from: day)
+            comps.hour = reminder.minuteOfDay / 60
+            comps.minute = reminder.minuteOfDay % 60
+            guard let fire = calendar.date(from: comps), fire > now else { continue }
+            return fire
+        }
+        return nil
+    }
+
+    func removeCustomReminder(_ id: UUID, fired: Bool = false) {
+        guard let reminder = customReminders.first(where: { $0.id == id }) else { return }
+        customReminders.removeAll { $0.id == id }
+        notice = fired
+            ? "「\(reminder.name)」已提醒,这条单次提醒完成了。"
+            : "已删除「\(reminder.name)」。"
     }
 
     private func showReminder(_ kind: String) {

@@ -5,12 +5,14 @@ enum ReminderPopupKind: Equatable {
     case water
     case move(OfficeExercise)
     case eyes
+    case custom(String)
 
     var key: String {
         switch self {
         case .water: "water"
         case .move: "move"
         case .eyes: "eyes"
+        case .custom(let name): "custom." + name
         }
     }
 
@@ -19,6 +21,7 @@ enum ReminderPopupKind: Equatable {
         case .water: NSSize(width: 640, height: 450)
         case .move: NSSize(width: 760, height: 600)
         case .eyes: NSSize(width: 620, height: 430)
+        case .custom: NSSize(width: 560, height: 350)
         }
     }
 }
@@ -233,6 +236,30 @@ struct ReminderPopupView: View {
             movementContent(exercise)
         case .eyes:
             eyesContent
+        case .custom:
+            customContent
+        }
+    }
+
+    private var customContent: some View {
+        HStack(spacing: 28) {
+            ZStack {
+                Circle().fill(mist).frame(width: 136, height: 136)
+                Image(systemName: "alarm.fill")
+                    .font(.system(size: 42, weight: .light))
+                    .foregroundStyle(livingGreen)
+            }
+            VStack(alignment: .leading, spacing: 13) {
+                Text("你安排的时间到了。")
+                    .font(.system(size: 19, weight: .medium, design: .rounded))
+                Text("按自己的节奏处理就好。")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                Button("知道了") { onClose() }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .tint(livingGreen)
+            }
         }
     }
 
@@ -338,7 +365,7 @@ struct ReminderPopupView: View {
                 .foregroundStyle(.tertiary)
             Spacer()
             Button("10 分钟后再提醒") {
-                store.snooze(kind.key)
+                store.snooze(kind)
                 onClose()
             }
             .buttonStyle(.plain)
@@ -351,6 +378,7 @@ struct ReminderPopupView: View {
         switch kind {
         case .water, .eyes: copy.headline
         case let .move(exercise): exercise.title
+        case .custom(let name): name
         }
     }
 }
