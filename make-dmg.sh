@@ -23,7 +23,8 @@ APP_PATH="$(pwd)/$BUILD_DIR/Build/Products/Release/${APP_NAME}.app"
 [ -d "$APP_PATH" ] || { echo "!! 找不到 $APP_PATH"; exit 1; }
 
 VERSION=$(defaults read "$APP_PATH/Contents/Info.plist" CFBundleShortVersionString 2>/dev/null || echo "1.0")
-OUT_DMG="${APP_NAME}-v${VERSION}.dmg"
+# 包名统一用英文 live-v<版本>.dmg,和 GitHub Release 里的资产名一致。
+OUT_DMG="live-v${VERSION}.dmg"
 
 echo "==> 准备 DMG 内容(带 /Applications 拖拽快捷方式)"
 STAGING="$BUILD_DIR/dmg-staging"
