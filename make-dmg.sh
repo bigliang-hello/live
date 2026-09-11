@@ -18,7 +18,8 @@ fi
 xcodebuild -project "$PROJECT" -scheme "$SCHEME" -configuration Release \
   -derivedDataPath "$BUILD_DIR" build ${SIGN_ARGS[@]+"${SIGN_ARGS[@]}"} 2>&1 | tail -5
 
-APP_PATH="$BUILD_DIR/Build/Products/Release/${APP_NAME}.app"
+# defaults 读 plist 需要绝对路径,相对路径会被当成域名而读到失败。
+APP_PATH="$(pwd)/$BUILD_DIR/Build/Products/Release/${APP_NAME}.app"
 [ -d "$APP_PATH" ] || { echo "!! 找不到 $APP_PATH"; exit 1; }
 
 VERSION=$(defaults read "$APP_PATH/Contents/Info.plist" CFBundleShortVersionString 2>/dev/null || echo "1.0")
