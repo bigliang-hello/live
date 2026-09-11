@@ -395,14 +395,13 @@ private struct PlayingBarsMark: View {
     }
 }
 
-/// 小憩进行中的界面：呼吸圆 + 剩余时间，结束（或提前结束）后记录一次照顾。
+/// 小憩进行中的界面：4-7-8 呼吸圆 + 剩余时间，结束（或提前结束）后记录一次照顾。
 struct NapSheet: View {
     let plan: NapPlan
     @Bindable var store: WellnessStore
     var onFinished: () -> Void = {}
     @Environment(\.dismiss) private var dismiss
 
-    @State private var breathing = false
     @State private var startedAt = Date.now
     @State private var finished = false
 
@@ -418,17 +417,18 @@ struct NapSheet: View {
                     .foregroundStyle(.secondary)
             }
 
-            ZStack {
-                Circle().fill(accent.opacity(0.07)).frame(width: 210, height: 210)
-                Circle()
-                    .fill(accent.opacity(0.15))
-                    .frame(width: 170, height: 170)
-                    .scaleEffect(breathing ? 1.12 : 0.88)
-                VStack(spacing: 5) {
-                    Text(breathing ? "吸气" : "呼气")
-                        .font(.title3.weight(.semibold))
-                    TimelineView(.periodic(from: .now, by: 1)) { timeline in
-                        let end = startedAt.addingTimeInterval(Double(plan.minutes * 60))
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { timeline in
+                let phase = breathPhase(at: timeline.date)
+                let end = startedAt.addingTimeInterval(Double(plan.minutes * 60))
+                ZStack {
+                    Circle().fill(accent.opacity(0.07)).frame(width: 210, height: 210)
+                    Circle()
+                        .fill(accent.opacity(0.15))
+                        .frame(width: 170, height: 170)
+                        .scaleEffect(phase.scale)
+                    VStack(spacing: 5) {
+                        Text(phase.label)
+                            .font(.title3.weight(.semibold))
                         Text(Self.clockString(max(0, end.timeIntervalSince(timeline.date))))
                             .font(.system(size: 34, weight: .light, design: .rounded).monospacedDigit())
                             .contentTransition(.numericText())
@@ -437,7 +437,7 @@ struct NapSheet: View {
             }
             .frame(height: 220)
 
-            Text("跟着圆的节奏呼吸：胀起来时吸气，缩回去时呼气。")
+            Text("跟着圆的节奏做 4-7-8 呼吸：吸气 4 秒，屏息 7 秒，慢慢呼气 8 秒。")
                 .font(.callout)
                 .foregroundStyle(.secondary)
 
@@ -449,9 +449,6 @@ struct NapSheet: View {
         .onAppear {
             startedAt = .now
             NapEngine.shared.play(plan.sound, volume: plan.volume)
-            withAnimation(.easeInOut(duration: 4).repeatForever(autoreverses: true)) {
-                breathing = true
-            }
         }
         .task {
             try? await Task.sleep(for: .seconds(Double(plan.minutes * 60)))
@@ -462,6 +459,25 @@ struct NapSheet: View {
             // 覆盖所有关闭路径（含 Esc）：恢复标签页的试听状态。
             onFinished()
         }
+    }
+
+    /// 4-7-8 呼吸节奏：吸气 4 秒（胀）→ 屏息 7 秒（停）→ 呼气 8 秒（缩），19 秒一个循环。
+    private func breathPhase(at date: Date) -> (label: String, scale: Double) {
+        let elapsed = max(0, date.timeIntervalSince(startedAt))
+        let t = elapsed.truncatingRemainder(dividingBy: 19)
+        if t < 4 {
+            return ("吸气", 0.88 + 0.24 * Self.smooth(t / 4))
+        }
+        if t < 11 {
+            return ("屏息", 1.12)
+        }
+        return ("呼气", 1.12 - 0.24 * Self.smooth((t - 11) / 8))
+    }
+
+    /// 近似的 easeInOut 曲线，让胀缩起止都柔和。
+    private static func smooth(_ progress: Double) -> Double {
+        let p = min(max(progress, 0), 1)
+        return p * p * (3 - 2 * p)
     }
 
     private func finish() {

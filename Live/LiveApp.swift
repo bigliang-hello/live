@@ -41,7 +41,7 @@ struct MenuContent: View {
             openWindow(id: "main")
             NSApp.activate(ignoringOtherApps: true)
         }
-        Button("退出并暂停提醒") { store.stop(); NSApp.terminate(nil) }
+        Button("退出活着") { NSApp.terminate(nil) }
     }
 }
 

@@ -299,8 +299,9 @@ struct DayTally: Identifiable {
         busy = true
         defer { busy = false }
 
-        let active = reminders.filter(\.enabled)
-        guard !active.isEmpty else {
+        // 开关状态保持:只开自定义提醒也算有效;什么都不开才拒绝启动。
+        let hasActive = !reminders.filter(\.enabled).isEmpty || !customReminders.filter(\.enabled).isEmpty
+        guard hasActive else {
             stop()
             notice = "先启用至少一种提醒。"
             return
@@ -388,10 +389,16 @@ struct DayTally: Identifiable {
     }
 
     /// 下次触发时间：先按间隔计算，若落在工作时段外则顺延到下一个窗口开始。
+    /// 同一天（如午休后）顺延到窗口开始、不丢；跨天（含跨周末）不把今天的
+    /// 倒计时接到明天——新的一天从开始时间重新计满一个间隔再提醒。
     func clampedFireDate(afterMinutes minutes: Int, from date: Date = .now) -> Date {
         let fire = date.addingTimeInterval(Double(max(1, minutes) * 60))
         guard !isInWorkHours(fire) else { return fire }
-        return nextWorkWindowStart(after: fire) ?? fire
+        guard let windowStart = nextWorkWindowStart(after: fire) else { return fire }
+        guard Calendar.current.isDate(windowStart, inSameDayAs: fire) else {
+            return windowStart.addingTimeInterval(Double(max(1, minutes) * 60))
+        }
+        return windowStart
     }
 
     var workHoursStatus: String {

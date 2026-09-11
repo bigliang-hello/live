@@ -224,8 +224,8 @@ struct ContentView: View {
             }
         }
         ReviewCard(store: store)
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "bell.badge").padding(.top, 2)
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            Image(systemName: "bell.badge").font(.callout)
             Text(store.notice).font(.callout).foregroundStyle(.secondary)
         }
         if !store.today.isEmpty {
@@ -304,7 +304,7 @@ struct ContentView: View {
             if store.running { Button("暂停全部") { store.stop() }.controlSize(.large) }
         }
         Text(store.notice).font(.callout).foregroundStyle(.secondary)
-        Text("关闭主窗口不会暂停提醒。提醒会按间隔重复；完全退出“活着”后计时停止。开启工作时段后只在时段内提醒；离开电脑超过 3 分钟时，「起来走走」会暂停等你回来。")
+        Text("关闭主窗口不会暂停提醒。提醒会按间隔重复；完全退出“活着”后计时停止，重新打开会按开关状态自动继续。开启工作时段后只在时段内提醒；离开电脑超过 3 分钟时，「起来走走」会暂停等你回来。")
             .font(.caption)
             .foregroundStyle(.secondary)
     }
@@ -367,7 +367,7 @@ struct ContentView: View {
                     GentleTimePicker(label: "到", minutes: $store.lunchEndMinutes)
                 }
             }
-            Text("时段外的提醒会顺延到下一个工作窗口的开始，不会丢；调整后计时按新窗口重新计算。")
+            Text("时段外的提醒会顺延到下一个工作窗口的开始，不会丢；跨天时第二天的计时从开始时间重新算满一个间隔。")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
