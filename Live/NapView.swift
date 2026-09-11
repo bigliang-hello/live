@@ -143,7 +143,7 @@ struct NapTabView: View {
 
     private static func storedMinutes() -> Int {
         let value = UserDefaults.standard.integer(forKey: "nap.minutes")
-        return [3, 5, 10, 15].contains(value) ? value : 5
+        return [3, 5, 10, 15, 30].contains(value) ? value : 5
     }
 
     private let ink = Color(red: 0.12, green: 0.26, blue: 0.24)
@@ -336,7 +336,7 @@ struct NapTabView: View {
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(.secondary)
                     .fixedSize()
-                GentleOptionPicker(options: [3, 5, 10, 15], selection: $minutes)
+                GentleOptionPicker(options: [3, 5, 10, 15, 30], selection: $minutes)
             }
             .frame(height: 44)
 

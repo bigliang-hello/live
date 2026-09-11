@@ -41,7 +41,24 @@ struct MenuContent: View {
             openWindow(id: "main")
             NSApp.activate(ignoringOtherApps: true)
         }
+        Divider()
+        Button("检查更新") { Task { await checkForUpdates() } }
+            .disabled(UpdateChecker.shared.checking)
         Button("退出活着") { NSApp.terminate(nil) }
+    }
+
+    /// 手动检查:有新版直接打开下载页,结果写进 notice 反馈。
+    private func checkForUpdates() async {
+        let updater = UpdateChecker.shared
+        let ok = await updater.check()
+        if !ok {
+            store.notice = "检查更新失败，请检查网络后重试。"
+        } else if updater.hasNewerVersion, let release = updater.latest {
+            store.notice = "发现新版本 \(release.tag)（当前 \(UpdateChecker.currentVersion)），已打开下载页。"
+            updater.openDownload()
+        } else {
+            store.notice = "已是最新版本 \(UpdateChecker.currentVersion)。"
+        }
     }
 }
 
@@ -56,6 +73,9 @@ final class ApplicationDelegate: NSObject, NSApplicationDelegate {
         UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
         Task { @MainActor in
             WellnessStore.shared.resumeRemindersIfNeeded()
+            // 稍等片刻再静默检查更新，不抢启动时的网络与注意力。
+            try? await Task.sleep(for: .seconds(6))
+            await UpdateChecker.shared.checkSilentlyIfNeeded()
         }
     }
 

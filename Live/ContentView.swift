@@ -24,6 +24,7 @@ struct ContentView: View {
     @State private var showWorkPopover = false
     @State private var showCustomForm = false
     @State private var loginItem = LoginItem.shared
+    @State private var updater = UpdateChecker.shared
     var body: some View {
         HStack(spacing: 0) {
             sidebar
@@ -158,6 +159,32 @@ struct ContentView: View {
                         .toggleStyle(.switch)
                         .controlSize(.mini)
                         .labelsHidden()
+                }
+
+                if updater.shouldShowBanner {
+                    Divider().opacity(0.4)
+                    HStack(spacing: 8) {
+                        Image(systemName: "arrow.down.circle.fill")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(green)
+                        Text("新版本 \(updater.latest?.tag ?? "") 可用")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("下载") { updater.openDownload() }
+                            .buttonStyle(.link)
+                            .font(.system(size: 11, weight: .semibold))
+                        Button {
+                            updater.skipCurrent()
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 8, weight: .bold))
+                                .foregroundStyle(.tertiary)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("忽略此版本")
+                    }
+                    .transition(.opacity)
                 }
             }
             .padding(12)
