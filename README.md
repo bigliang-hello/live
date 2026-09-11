@@ -41,7 +41,7 @@
 ## 打包
 
 ```bash
-./make-dmg.sh        # Release 构建 → 活着-v<版本>.dmg
+./make-dmg.sh        # Release 构建 → live-v<版本>.dmg
 ```
 
 DMG 内含应用与 `/Applications` 快捷方式,拖拽即装。个人 Apple ID 打的包未做公证,发给他人时对方需在 系统设置 › 隐私与安全性 中放行一次。
