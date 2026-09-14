@@ -147,7 +147,9 @@ struct DayTally: Identifiable {
     var nextFireDates: [String: Date] = [:]
     var running = false
     var busy = false
-    var notice = "开启后，提醒会以应用浮窗出现在屏幕中央。"
+    /// 右上角的短暂反馈（吐司）：几秒后自动消失，点一下也可关闭。
+    var toast: String?
+    private var toastTask: Task<Void, Never>?
 
     // 工作时段：开启后提醒只在工作窗口内出现，午休时段静默。
     var workHoursEnabled = false { didSet { persistWorkHours(); restartTasksIfRunning() } }
@@ -222,7 +224,7 @@ struct DayTally: Identifiable {
 
     func checkWater(_ amount: Int) {
         check("water", amount: amount)
-        notice = "已记录 \(amount) ml，今天共摄入 \(formattedWaterTotal)。"
+        showToast("已记录 \(amount) ml，今天共摄入 \(formattedWaterTotal)。")
     }
 
     func undo(_ id: UUID) {
@@ -282,7 +284,7 @@ struct DayTally: Identifiable {
 
     func finishNap(minutes: Int) {
         records.append(CheckIn(kind: "rest", amount: minutes))
-        notice = "小憩了 \(minutes) 分钟，也记进了今天的照顾。"
+        showToast("小憩了 \(minutes) 分钟，也记进了今天的照顾。")
     }
 
     // MARK: - 提醒调度
@@ -291,7 +293,6 @@ struct DayTally: Identifiable {
         removeLegacySystemNotifications()
         guard running else { return }
         startReminderTasks()
-        notice = "居中提醒正在运行。关闭窗口后仍会按计划出现。"
     }
 
     func schedule() async {
@@ -303,14 +304,14 @@ struct DayTally: Identifiable {
         let hasActive = !reminders.filter(\.enabled).isEmpty || !customReminders.filter(\.enabled).isEmpty
         guard hasActive else {
             stop()
-            notice = "先启用至少一种提醒。"
+            showToast("先启用至少一种提醒。")
             return
         }
 
         startReminderTasks()
         running = true
         defaults.set(true, forKey: "running")
-        notice = "提醒已开启。关闭窗口后仍会弹出；下班时可从菜单栏暂停。"
+        showToast("提醒已开启。关闭窗口后仍会弹出；下班时可从菜单栏暂停。")
     }
 
     func stop() {
@@ -327,7 +328,7 @@ struct DayTally: Identifiable {
         removeLegacySystemNotifications()
         running = false
         defaults.set(false, forKey: "running")
-        notice = "提醒已暂停，随时可以继续。"
+        showToast("提醒已暂停，随时可以继续。")
     }
 
     func showWaterReminder() {
@@ -360,7 +361,7 @@ struct DayTally: Identifiable {
             ReminderPopupController.shared.enqueue(kind)
         }
         snoozeTasks.append(task)
-        notice = "已推迟 \(minutes) 分钟。"
+        showToast("已推迟 \(minutes) 分钟。")
     }
 
     // MARK: - 工作时段
@@ -470,7 +471,7 @@ struct DayTally: Identifiable {
         reminders[index].minutes = suggestion.minutes
         snoozeCountsToday[suggestion.reminder.id] = 0
         persistSnoozeCounts()
-        notice = "已把「\(suggestion.reminder.title)」放宽到 \(suggestion.minutes) 分钟，试试新的节奏。"
+        showToast("已把「\(suggestion.reminder.title)」放宽到 \(suggestion.minutes) 分钟，试试新的节奏。")
     }
 
     private var snoozeDayKey: String {
@@ -530,7 +531,7 @@ struct DayTally: Identifiable {
         guard running else { return }
         for (oldReminder, newReminder) in zip(old, reminders) where oldReminder != newReminder {
             restartTask(for: newReminder)
-            notice = "已应用「\(newReminder.title)」的修改，其他提醒的倒计时不受影响。"
+            showToast("已应用「\(newReminder.title)」的修改，其他提醒的倒计时不受影响。")
         }
     }
 
@@ -628,12 +629,28 @@ struct DayTally: Identifiable {
         return nil
     }
 
+    /// 右上角短暂反馈：显示几秒后自动消失；期间来了新反馈会替换旧的。
+    func showToast(_ text: String, dismissAfter seconds: Double = 3) {
+        toastTask?.cancel()
+        toast = text
+        toastTask = Task { [weak self, text] in
+            try? await Task.sleep(for: .seconds(seconds))
+            guard !Task.isCancelled, let self, self.toast == text else { return }
+            self.toast = nil
+        }
+    }
+
+    func dismissToast() {
+        toastTask?.cancel()
+        toast = nil
+    }
+
     func removeCustomReminder(_ id: UUID, fired: Bool = false) {
         guard let reminder = customReminders.first(where: { $0.id == id }) else { return }
         customReminders.removeAll { $0.id == id }
-        notice = fired
+        showToast(fired
             ? "「\(reminder.name)」已提醒,这条单次提醒完成了。"
-            : "已删除「\(reminder.name)」。"
+            : "已删除「\(reminder.name)」。")
     }
 
     private func showReminder(_ kind: String) {

@@ -32,7 +32,7 @@ struct MenuContent: View {
             get: { LoginItem.shared.enabled },
             set: { value in
                 if !LoginItem.shared.setEnabled(value) {
-                    store.notice = "设置开机自启动没有成功，可以到 系统设置 › 通用 › 登录项 里检查。"
+                    store.showToast("设置开机自启动没有成功，可以到 系统设置 › 通用 › 登录项 里检查。")
                 }
             }
         ))
@@ -47,17 +47,17 @@ struct MenuContent: View {
         Button("退出活着") { NSApp.terminate(nil) }
     }
 
-    /// 手动检查:有新版直接打开下载页,结果写进 notice 反馈。
+    /// 手动检查:有新版直接打开下载页,结果用右上角吐司反馈。
     private func checkForUpdates() async {
         let updater = UpdateChecker.shared
         let ok = await updater.check()
         if !ok {
-            store.notice = "检查更新失败，请检查网络后重试。"
+            store.showToast("检查更新失败，请检查网络后重试。")
         } else if updater.hasNewerVersion, let release = updater.latest {
-            store.notice = "发现新版本 \(release.tag)（当前 \(UpdateChecker.currentVersion)），已打开下载页。"
+            store.showToast("发现新版本 \(release.tag)（当前 \(UpdateChecker.currentVersion)），已打开下载页。")
             updater.openDownload()
         } else {
-            store.notice = "已是最新版本 \(UpdateChecker.currentVersion)。"
+            store.showToast("已是最新版本 \(UpdateChecker.currentVersion)。")
         }
     }
 }

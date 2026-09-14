@@ -305,9 +305,9 @@ struct CustomReminderForm: View {
             enabled: true
         )
         store.customReminders.append(reminder)
-        store.notice = store.running
+        store.showToast(store.running
             ? "已添加「\(reminder.name)」,到点会以居中弹窗提醒。"
-            : "已添加「\(reminder.name)」,开启提醒后才会计时。"
+            : "已添加「\(reminder.name)」,开启提醒后才会计时。")
         dismiss()
     }
 }

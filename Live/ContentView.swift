@@ -23,6 +23,7 @@ struct ContentView: View {
     @State private var page = Page.today
     @State private var showWorkPopover = false
     @State private var showCustomForm = false
+    @State private var pendingDelete: CustomReminder?
     @State private var loginItem = LoginItem.shared
     @State private var updater = UpdateChecker.shared
     var body: some View {
@@ -61,6 +62,17 @@ struct ContentView: View {
                     .id(page)
                 }
             }.background(paper)
+                // 操作反馈统一走右上角吐司:飘几秒自动消失,点一下提前收起。
+                .overlay(alignment: .topTrailing) {
+                    if let toast = store.toast {
+                        ToastCard(text: toast)
+                            .padding(.top, 82)
+                            .padding(.trailing, 34)
+                            .transition(.move(edge: .trailing).combined(with: .opacity))
+                            .onTapGesture { store.dismissToast() }
+                    }
+                }
+                .animation(.spring(response: 0.42, dampingFraction: 0.85), value: store.toast)
         }.foregroundStyle(ink).tint(green).frame(minWidth: 900, minHeight: 680)
             .preferredColorScheme(.light)
     }
@@ -99,7 +111,7 @@ struct ContentView: View {
             get: { loginItem.enabled },
             set: { value in
                 if !loginItem.setEnabled(value) {
-                    store.notice = "设置开机自启动没有成功，可以到 系统设置 › 通用 › 登录项 里检查。"
+                    store.showToast("设置开机自启动没有成功，可以到 系统设置 › 通用 › 登录项 里检查。")
                 }
             }
         )
@@ -251,10 +263,6 @@ struct ContentView: View {
             }
         }
         ReviewCard(store: store)
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Image(systemName: "bell.badge").font(.callout)
-            Text(store.notice).font(.callout).foregroundStyle(.secondary)
-        }
         if !store.today.isEmpty {
             VStack(alignment: .leading, spacing: 14) {
                 Text("今天的足迹").font(.headline)
@@ -330,7 +338,6 @@ struct ContentView: View {
             Button(store.running ? "全部重新计时" : "开启提醒") { Task { await store.schedule() } }.buttonStyle(.borderedProminent).controlSize(.large).disabled(store.busy)
             if store.running { Button("暂停全部") { store.stop() }.controlSize(.large) }
         }
-        Text(store.notice).font(.callout).foregroundStyle(.secondary)
         Text("关闭主窗口不会暂停提醒。提醒会按间隔重复；完全退出“活着”后计时停止，重新打开会按开关状态自动继续。开启工作时段后只在时段内提醒；离开电脑超过 3 分钟时，「起来走走」会暂停等你回来。")
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -438,6 +445,22 @@ struct ContentView: View {
         .sheet(isPresented: $showCustomForm) {
             CustomReminderForm(store: store)
         }
+        // 删除自定义提醒前先确认,避免误触垃圾桶图标直接删掉。
+        .alert(
+            "删除「\(pendingDelete?.name ?? "")」？",
+            isPresented: Binding(
+                get: { pendingDelete != nil },
+                set: { if !$0 { pendingDelete = nil } }
+            )
+        ) {
+            Button("删除", role: .destructive) {
+                if let target = pendingDelete { store.removeCustomReminder(target.id) }
+                pendingDelete = nil
+            }
+            Button("取消", role: .cancel) { pendingDelete = nil }
+        } message: {
+            Text("删除后这条提醒不再计时。")
+        }
     }
 
     private func customReminderRow(_ reminder: Binding<CustomReminder>) -> some View {
@@ -469,7 +492,7 @@ struct ContentView: View {
                 .toggleStyle(.switch)
                 .accessibilityLabel("启用\(reminder.wrappedValue.name)")
             Button {
-                store.removeCustomReminder(reminder.wrappedValue.id)
+                pendingDelete = reminder.wrappedValue
             } label: {
                 Image(systemName: "trash")
                     .font(.callout)
@@ -547,6 +570,36 @@ struct ContentView: View {
             guard record.kind == "water", let amount = record.amount else { return title }
             return "\(title) · \(amount) ml"
         }
+    }
+}
+
+/// 右上角的短暂反馈卡片:操作结果在这里飘几秒,点一下提前收起。
+private struct ToastCard: View {
+    let text: String
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(green)
+            Text(text)
+                .font(.callout)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 2)
+            Image(systemName: "xmark")
+                .font(.system(size: 9, weight: .bold))
+                .foregroundStyle(.tertiary)
+                .padding(4)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 11)
+        .frame(maxWidth: 340, alignment: .leading)
+        .background(.white, in: RoundedRectangle(cornerRadius: 14))
+        .overlay {
+            RoundedRectangle(cornerRadius: 14).stroke(Color.black.opacity(0.06))
+        }
+        .shadow(color: .black.opacity(0.12), radius: 16, y: 6)
+        .contentShape(Rectangle())
     }
 }
 
