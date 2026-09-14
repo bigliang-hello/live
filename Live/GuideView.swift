@@ -29,8 +29,10 @@ struct HealthArticle: Identifiable {
             }
         }
         for line in markdown.components(separatedBy: .newlines) {
-            if line.hasPrefix("## ") {
-                append(); title = ""; lines = []; section = String(line.dropFirst(3))
+            // 章标题有两种来源:内置快照是 "## N. …",book/ 子文件是 "# N. …"。
+            if line.hasPrefix("## ") || line.hasPrefix("# ") {
+                append(); title = ""; lines = []
+                section = line.hasPrefix("## ") ? String(line.dropFirst(3)) : String(line.dropFirst(2))
             } else if line.hasPrefix("### ") {
                 append(); title = String(line.dropFirst(4)); lines = []
             } else if !line.hasPrefix("<!--"), line != "---" {
@@ -344,17 +346,29 @@ struct GuideView: View {
         articles = HealthArticle.parse(cached.isEmpty ? bundled : cached)
     }
 
+    /// 同步:上游 README 现在只有目录,正文按节拆在 book/ 子文件里。
+    /// 先从目录拿文件名,再并行拉取应用保留的健康主题。
     private func fetch() async {
         loading = true; error = nil
         defer { loading = false }
         do {
-            var request = URLRequest(url: URL(string: "https://api.github.com/repos/eternity4719/HowToLiveBetter/readme")!)
-            request.timeoutInterval = 20
-            request.setValue("application/vnd.github.raw+json", forHTTPHeaderField: "Accept")
-            let (data, response) = try await URLSession.shared.data(for: request)
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200,
-                  let markdown = String(data: data, encoding: .utf8),
-                  !HealthArticle.parse(markdown).isEmpty else { throw URLError(.cannotParseResponse) }
+            let readme = try await fetchRaw("README.md")
+            let paths = Self.bookPaths(in: readme)
+            guard !paths.isEmpty else { throw URLError(.cannotParseResponse) }
+
+            let markdown = try await withThrowingTaskGroup(of: String.self) { group in
+                for number in Self.keptSectionNumbers {
+                    guard let path = paths[number] else { continue }
+                    group.addTask { try await fetchRaw(path) }
+                }
+                var parts: [String] = []
+                for try await part in group { parts.append(part) }
+                return parts.joined(separator: "\n\n")
+            }
+            guard !HealthArticle.parse(markdown).isEmpty else {
+                error = "同步到的内容结构变了，仍显示已保存的指南。"
+                return
+            }
             cached = markdown
             updated = Date().formatted(date: .numeric, time: .shortened)
             selection = "全部"
@@ -363,6 +377,44 @@ struct GuideView: View {
         } catch {
             self.error = "同步失败，仍显示已保存的指南。请检查网络后重试。"
         }
+    }
+
+    /// 应用只保留与健康直接相关的五个主题,其余(省钱、法律等)不在范围内。
+    private static let keptSectionNumbers = ["1", "2", "3", "6", "16"]
+    private static let rawBase = "https://raw.githubusercontent.com/eternity4719/HowToLiveBetter/main/"
+
+    /// 从 raw.githubusercontent 拉一个文件;路径里的中文会被百分号编码。
+    private func fetchRaw(_ path: String) async throws -> String {
+        let encoded = path.split(separator: "/")
+            .map { $0.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? String($0) }
+            .joined(separator: "/")
+        guard let url = URL(string: Self.rawBase + encoded) else { throw URLError(.badURL) }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 20
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200,
+              let text = String(data: data, encoding: .utf8), !text.isEmpty else {
+            throw URLError(.badServerResponse)
+        }
+        return text
+    }
+
+    /// 从 README 目录行取节号 → book 文件路径,如 "16" → "book/16-得了慢性病之后怎么活.md"。
+    /// 目录行形如 "16. [标题](book/16-….md)：…",手工抽出第一个链接避免依赖正则字面量。
+    private static func bookPaths(in readme: String) -> [String: String] {
+        var result: [String: String] = [:]
+        for line in readme.components(separatedBy: .newlines) {
+            guard let openBracket = line.firstIndex(of: "["),
+                  let closeBracket = line[openBracket...].firstIndex(of: "]"),
+                  let openParen = line[closeBracket...].firstIndex(of: "("),
+                  let closeParen = line[openParen...].firstIndex(of: ")") else { continue }
+            let number = String(line[..<openBracket].trimmingCharacters(in: .whitespaces))
+            let path = String(line[line.index(after: openParen)..<closeParen])
+            guard number.hasSuffix("."), number.dropLast().allSatisfy(\.isNumber),
+                  path.hasPrefix("book/"), path.hasSuffix(".md") else { continue }
+            result[String(number.dropLast())] = path
+        }
+        return result
     }
 }
 
