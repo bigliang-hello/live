@@ -152,14 +152,16 @@ struct DayTally: Identifiable {
     private var toastTask: Task<Void, Never>?
 
     // 工作时段：开启后提醒只在工作窗口内出现，午休时段静默。
-    var workHoursEnabled = false { didSet { persistWorkHours(); restartTasksIfRunning() } }
-    var workStartMinutes = 9 * 60 { didSet { persistWorkHours(); restartTasksIfRunning() } }
-    var workEndMinutes = 19 * 60 { didSet { persistWorkHours(); restartTasksIfRunning() } }
-    var lunchEnabled = false { didSet { persistWorkHours(); restartTasksIfRunning() } }
-    var lunchStartMinutes = 12 * 60 + 30 { didSet { persistWorkHours(); restartTasksIfRunning() } }
-    var lunchEndMinutes = 13 * 60 + 30 { didSet { persistWorkHours(); restartTasksIfRunning() } }
+    // didSet 在 init 加载阶段也会触发，且 persistWorkHours 会整组回写——
+    // 若不加 bootstrapping 保护，排在后面的午休/周末还没读到旧值就被默认值覆盖了。
+    var workHoursEnabled = false { didSet { guard !bootstrapping else { return }; persistWorkHours(); restartTasksIfRunning() } }
+    var workStartMinutes = 9 * 60 { didSet { guard !bootstrapping else { return }; persistWorkHours(); restartTasksIfRunning() } }
+    var workEndMinutes = 19 * 60 { didSet { guard !bootstrapping else { return }; persistWorkHours(); restartTasksIfRunning() } }
+    var lunchEnabled = false { didSet { guard !bootstrapping else { return }; persistWorkHours(); restartTasksIfRunning() } }
+    var lunchStartMinutes = 12 * 60 + 30 { didSet { guard !bootstrapping else { return }; persistWorkHours(); restartTasksIfRunning() } }
+    var lunchEndMinutes = 13 * 60 + 30 { didSet { guard !bootstrapping else { return }; persistWorkHours(); restartTasksIfRunning() } }
     // 周末不提醒：配合工作时段使用，周六周日整体静默，周一窗口开始时恢复。
-    var weekendSilenced = false { didSet { persistWorkHours(); restartTasksIfRunning() } }
+    var weekendSilenced = false { didSet { guard !bootstrapping else { return }; persistWorkHours(); restartTasksIfRunning() } }
 
     // 闲置检测：运动提醒到期时若用户不在电脑前，暂停等待，回来后再提醒。
     var moveWaitingForUser = false
@@ -189,21 +191,33 @@ struct DayTally: Identifiable {
         return try? JSONDecoder().decode(T.self, from: data)
     }
 
-    /// 历史遗留:应用曾开过 App 沙盒,设置和数据都存在按应用隔离的容器里,
-    /// 替换/删除应用时容器可能被系统清理,设置就丢了。现在已去掉沙盒、
-    /// 改存常规偏好域(与应用是否在磁盘上无关);首次启动把容器里的旧数据搬过来。
+    /// 历史遗留:应用曾开过 App 沙盒,数据存在按应用隔离的容器里;而且只要
+    /// 容器还在,系统的偏好服务就会把这个域名路由到容器,替换应用时容器可能
+    /// 被清理,设置就丢了。这里把容器数据合并进常规偏好文件并删掉容器 plist,
+    /// 路由随之回到常规文件,与应用是否在磁盘上无关。容器文件不存在即已完成,
+    /// 天然只跑一次。注意必须直接写文件——走 UserDefaults 会被路由回容器。
     private static func migrateSandboxContainerIfNeeded() {
-        let defaults = UserDefaults.standard
-        guard !defaults.bool(forKey: "prefs.migratedFromContainer") else { return }
-        let container = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Containers/com.bigliang.Live/Data/Library/Preferences/com.bigliang.Live.plist")
-        if let data = try? Data(contentsOf: container),
+        let fileManager = FileManager.default
+        let home = fileManager.homeDirectoryForCurrentUser
+        let containerPlist = home.appendingPathComponent("Containers/com.bigliang.Live/Data/Library/Preferences/com.bigliang.Live.plist")
+        guard fileManager.fileExists(atPath: containerPlist.path) else { return }
+        let hostPlist = home.appendingPathComponent("Library/Preferences/com.bigliang.Live.plist")
+
+        var merged: [String: Any] = [:]
+        if let data = try? Data(contentsOf: hostPlist),
+           let dict = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] {
+            merged = dict
+        }
+        if let data = try? Data(contentsOf: containerPlist),
            let dict = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] {
             for (key, value) in dict where !key.hasPrefix("NS") && !key.hasPrefix("Apple") {
-                defaults.set(value, forKey: key)
+                merged[key] = value
             }
         }
-        defaults.set(true, forKey: "prefs.migratedFromContainer")
+        if let out = try? PropertyListSerialization.data(fromPropertyList: merged, format: .binary, options: 0) {
+            try? out.write(to: hostPlist, options: .atomic)
+        }
+        try? fileManager.removeItem(at: containerPlist)
     }
 
     func save() {
