@@ -174,6 +174,7 @@ struct DayTally: Identifiable {
     private var bootstrapping = true
 
     init() {
+        Self.migrateSandboxContainerIfNeeded()
         reminders = Self.read("reminders") ?? Reminder.defaults
         records = Self.read("records") ?? []
         customReminders = Self.read("customReminders") ?? []
@@ -186,6 +187,23 @@ struct DayTally: Identifiable {
     private static func read<T: Decodable>(_ key: String) -> T? {
         guard let data = UserDefaults.standard.data(forKey: key) else { return nil }
         return try? JSONDecoder().decode(T.self, from: data)
+    }
+
+    /// 历史遗留:应用曾开过 App 沙盒,设置和数据都存在按应用隔离的容器里,
+    /// 替换/删除应用时容器可能被系统清理,设置就丢了。现在已去掉沙盒、
+    /// 改存常规偏好域(与应用是否在磁盘上无关);首次启动把容器里的旧数据搬过来。
+    private static func migrateSandboxContainerIfNeeded() {
+        let defaults = UserDefaults.standard
+        guard !defaults.bool(forKey: "prefs.migratedFromContainer") else { return }
+        let container = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Containers/com.bigliang.Live/Data/Library/Preferences/com.bigliang.Live.plist")
+        if let data = try? Data(contentsOf: container),
+           let dict = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any] {
+            for (key, value) in dict where !key.hasPrefix("NS") && !key.hasPrefix("Apple") {
+                defaults.set(value, forKey: key)
+            }
+        }
+        defaults.set(true, forKey: "prefs.migratedFromContainer")
     }
 
     func save() {
