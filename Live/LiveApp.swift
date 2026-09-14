@@ -47,17 +47,16 @@ struct MenuContent: View {
         Button("退出活着") { NSApp.terminate(nil) }
     }
 
-    /// 手动检查:有新版直接打开下载页,结果用右上角吐司反馈。
+    /// 手动检查:结果用独立浮窗反馈,主窗口没开也能看到。
     private func checkForUpdates() async {
         let updater = UpdateChecker.shared
         let ok = await updater.check()
         if !ok {
-            store.showToast("检查更新失败，请检查网络后重试。")
+            UpdatePanelController.shared.showFailure()
         } else if updater.hasNewerVersion, let release = updater.latest {
-            store.showToast("发现新版本 \(release.tag)（当前 \(UpdateChecker.currentVersion)），已打开下载页。")
-            updater.openDownload()
+            UpdatePanelController.shared.showAvailable(tag: release.tag, current: UpdateChecker.currentVersion)
         } else {
-            store.showToast("已是最新版本 \(UpdateChecker.currentVersion)。")
+            UpdatePanelController.shared.showUpToDate(current: UpdateChecker.currentVersion)
         }
     }
 }
