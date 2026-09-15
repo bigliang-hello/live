@@ -20,9 +20,10 @@ struct Reminder: Identifiable, Codable, Equatable {
     static let intervalLadder = [15, 20, 30, 45, 60, 90, 120]
 }
 
-/// 自定义提醒的重复方式。
+/// 自定义提醒的重复方式。声明顺序即表单里药丸的顺序:
+/// 三种按日历重复 + 按间隔重复,最后是只提醒一次的单次。
 enum RepeatMode: String, Codable, CaseIterable {
-    case daily, weekly, monthly, once
+    case daily, weekly, monthly, interval, once
 
     var label: String {
         switch self {
@@ -30,11 +31,13 @@ enum RepeatMode: String, Codable, CaseIterable {
         case .weekly: "每周"
         case .monthly: "每月"
         case .once: "单次"
+        case .interval: "每隔"
         }
     }
 }
 
-/// 自定义提醒:每天/每周几/每月几号的某个时刻重复,或某个具体日期时间只提醒一次。
+/// 自定义提醒:每天/每周几/每月几号的某个时刻重复,每隔一段时间重复,
+/// 或某个具体日期时间只提醒一次。
 struct CustomReminder: Identifiable, Equatable {
     var id = UUID()
     var name: String
@@ -45,6 +48,8 @@ struct CustomReminder: Identifiable, Equatable {
     var monthDays: Set<Int> = []
     /// 一天里的第几分钟(单次提醒也用它表示时刻)。
     var minuteOfDay = 9 * 60
+    /// 间隔提醒:每隔多少分钟提醒一次。
+    var intervalMinutes = 45
     /// 单次提醒的触发时刻。
     var fireDate: Date?
     var enabled = true
@@ -55,6 +60,7 @@ struct CustomReminder: Identifiable, Equatable {
         weekdays: Set<Int> = [],
         monthDays: Set<Int> = [],
         minuteOfDay: Int = 9 * 60,
+        intervalMinutes: Int = 45,
         fireDate: Date? = nil,
         enabled: Bool = true
     ) {
@@ -63,6 +69,7 @@ struct CustomReminder: Identifiable, Equatable {
         self.weekdays = weekdays
         self.monthDays = monthDays
         self.minuteOfDay = minuteOfDay
+        self.intervalMinutes = intervalMinutes
         self.fireDate = fireDate
         self.enabled = enabled
     }
@@ -70,7 +77,7 @@ struct CustomReminder: Identifiable, Equatable {
 
 extension CustomReminder: Codable {
     enum CodingKeys: String, CodingKey {
-        case id, name, repeatMode, weekdays, monthDays, minuteOfDay, fireDate, enabled, isOneTime
+        case id, name, repeatMode, weekdays, monthDays, minuteOfDay, fireDate, enabled, isOneTime, intervalMinutes
     }
 
     init(from decoder: Decoder) throws {
@@ -88,6 +95,7 @@ extension CustomReminder: Codable {
         weekdays = try c.decodeIfPresent(Set<Int>.self, forKey: .weekdays) ?? []
         monthDays = try c.decodeIfPresent(Set<Int>.self, forKey: .monthDays) ?? []
         minuteOfDay = try c.decodeIfPresent(Int.self, forKey: .minuteOfDay) ?? 9 * 60
+        intervalMinutes = try c.decodeIfPresent(Int.self, forKey: .intervalMinutes) ?? 45
         fireDate = try c.decodeIfPresent(Date.self, forKey: .fireDate)
         enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
     }
@@ -100,6 +108,7 @@ extension CustomReminder: Codable {
         try c.encode(weekdays, forKey: .weekdays)
         try c.encode(monthDays, forKey: .monthDays)
         try c.encode(minuteOfDay, forKey: .minuteOfDay)
+        try c.encode(intervalMinutes, forKey: .intervalMinutes)
         try c.encodeIfPresent(fireDate, forKey: .fireDate)
         try c.encode(enabled, forKey: .enabled)
     }
@@ -621,13 +630,18 @@ struct DayTally: Identifiable {
         }
     }
 
-    /// 下一次触发时刻:单次看 fireDate;重复的从今天起逐日找第一个匹配的日子与时刻。
+    /// 下一次触发时刻:单次看 fireDate;间隔的从当下加一段;
+    /// 其余从今天起逐日找第一个匹配的日子与时刻。
     func nextFireDate(for reminder: CustomReminder) -> Date? {
         guard reminder.enabled else { return nil }
         let calendar = Calendar.current
         guard reminder.repeatMode != .once else {
             guard let fire = reminder.fireDate else { return nil }
             return fire > .now ? fire : nil
+        }
+        if reminder.repeatMode == .interval {
+            // 与内置提醒同一套计时与顺延规则:工作时段外自动顺延到下一个窗口。
+            return clampedFireDate(afterMinutes: reminder.intervalMinutes)
         }
 
         let maxOffset: Int
@@ -639,7 +653,7 @@ struct DayTally: Identifiable {
         case .monthly:
             guard !reminder.monthDays.isEmpty else { return nil }
             maxOffset = 62   // 只选 31 号时可能隔月(如 1月31日 → 3月31日)
-        case .once: return nil
+        case .interval, .once: return nil
         }
 
         let now = Date.now

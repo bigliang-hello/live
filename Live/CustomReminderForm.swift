@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// 添加自定义提醒的表单:名称 + 重复方式(每天/每周几/每月几号/单次)+ 时刻。
+/// 添加自定义提醒的表单:名称 + 重复方式(每天/每周几/每月几号/每隔多久/单次)+ 时刻或间隔。
 /// 单次的日期用自绘迷你月历挑选,不用系统图形化日期控件。
 struct CustomReminderForm: View {
     @Bindable var store: WellnessStore
@@ -11,8 +11,12 @@ struct CustomReminderForm: View {
     @State private var weekdays: Set<Int> = []
     @State private var monthDays: Set<Int> = []
     @State private var minuteOfDay = 9 * 60
+    @State private var intervalMinutes = 30
     @State private var oneTimeDay = CustomReminderForm.defaultOnceDay(9 * 60)
     @State private var showCalendar = false
+
+    /// 间隔提醒的档位:10 分钟到 4 小时。
+    private static let intervalOptions = [10, 15, 20, 30, 45, 60, 90, 120, 180, 240]
 
     private let ink = Color(red: 0.12, green: 0.26, blue: 0.24)
     private let green = Color(red: 0.18, green: 0.43, blue: 0.35)
@@ -47,6 +51,7 @@ struct CustomReminderForm: View {
         case .daily: return true
         case .weekly: return !weekdays.isEmpty
         case .monthly: return !monthDays.isEmpty
+        case .interval: return intervalMinutes > 0
         case .once: return onceFireDate > .now
         }
     }
@@ -57,6 +62,7 @@ struct CustomReminderForm: View {
         case .daily: return nil
         case .weekly: return weekdays.isEmpty ? "至少选一个星期" : nil
         case .monthly: return monthDays.isEmpty ? "至少选一个日子" : nil
+        case .interval: return nil
         case .once: return onceFireDate <= .now ? "选的时刻已过去" : nil
         }
     }
@@ -119,6 +125,14 @@ struct CustomReminderForm: View {
                     GentleTimePicker(label: "", minutes: $minuteOfDay)
                     Spacer()
                 }
+            case .interval:
+                HStack(spacing: 12) {
+                    Text("间隔")
+                        .font(.callout).foregroundStyle(.secondary)
+                        .frame(width: 42, alignment: .leading)
+                    GentleLadderPicker(minutes: $intervalMinutes, options: Self.intervalOptions)
+                    Spacer()
+                }
             }
 
             Spacer(minLength: 0)
@@ -153,6 +167,7 @@ struct CustomReminderForm: View {
         case .daily: 330
         case .weekly: 380
         case .monthly: 520
+        case .interval: 330
         case .once: 340
         }
     }
@@ -162,6 +177,7 @@ struct CustomReminderForm: View {
         case .daily: "每个到达的时刻"
         case .weekly: "在所选日子的同一时刻"
         case .monthly: "在每月所选的日子"
+        case .interval: "按间隔反复提醒"
         case .once: "到点只提醒一次"
         }
     }
@@ -174,7 +190,7 @@ struct CustomReminderForm: View {
 
     // MARK: - 重复方式选择
 
-    /// 胶囊轨道里的四枚文字药丸,风格与 GentleOptionPicker 一致。
+    /// 胶囊轨道里的五枚文字药丸,风格与 GentleOptionPicker 一致。
     private var modePicker: some View {
         HStack(spacing: 3) {
             ForEach(RepeatMode.allCases, id: \.self) { candidate in
@@ -185,7 +201,7 @@ struct CustomReminderForm: View {
                     Text(candidate.label)
                         .font(.system(size: 13, weight: .semibold, design: .rounded))
                         .foregroundStyle(on ? ink : .secondary)
-                        .frame(width: 50, height: 26)
+                        .frame(width: 44, height: 26)
                         .background(on ? Color.white : .clear, in: Capsule())
                         .shadow(color: .black.opacity(on ? 0.1 : 0), radius: 2, y: 1)
                         .contentShape(Rectangle())
@@ -301,6 +317,7 @@ struct CustomReminderForm: View {
             weekdays: mode == .weekly ? weekdays : [],
             monthDays: mode == .monthly ? monthDays : [],
             minuteOfDay: minuteOfDay,
+            intervalMinutes: mode == .interval ? intervalMinutes : 45,
             fireDate: mode == .once ? onceFireDate : nil,
             enabled: true
         )

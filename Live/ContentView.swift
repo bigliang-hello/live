@@ -418,7 +418,7 @@ struct ContentView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("自定义提醒").font(.headline)
-                    Text("每天、每周几、每月几号或只提醒一次;到点以居中弹窗出现。").font(.caption).foregroundStyle(.secondary)
+                    Text("每天、每周几、每月几号、每隔多久,或只提醒一次;到点以居中弹窗出现。").font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
                 Button {
@@ -505,7 +505,8 @@ struct ContentView: View {
         .background(Color(red: 0.97, green: 0.98, blue: 0.97), in: RoundedRectangle(cornerRadius: 14))
     }
 
-    /// 行内副标题:每天 09:00 / 每周三、周五 18:30 / 每月1日、15日 09:00 / 9月15日 10:00(已过期)。
+    /// 行内副标题:每天 09:00 / 每周三、周五 18:30 / 每月1日、15日 09:00 /
+    /// 每隔 45 分钟 / 9月15日 10:00(已过期)。
     private func customSubtitle(_ reminder: CustomReminder) -> String {
         let time = String(format: "%02d:%02d", reminder.minuteOfDay / 60, reminder.minuteOfDay % 60)
         switch reminder.repeatMode {
@@ -524,6 +525,10 @@ struct ContentView: View {
         case .monthly:
             let days = reminder.monthDays.sorted().map { "\($0)日" }.joined(separator: "、")
             return "每月\(days) \(time)"
+        case .interval:
+            let minutes = reminder.intervalMinutes
+            if minutes >= 60, minutes % 60 == 0 { return "每隔 \(minutes / 60) 小时" }
+            return "每隔 \(minutes) 分钟"
         }
     }
 
@@ -532,6 +537,7 @@ struct ContentView: View {
         case .daily: "clock.arrow.circlepath"
         case .weekly: "calendar"
         case .monthly: "calendar.circle"
+        case .interval: "timer"
         case .once: "calendar.badge.clock"
         }
     }
