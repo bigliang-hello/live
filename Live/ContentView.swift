@@ -216,7 +216,8 @@ struct ContentView: View {
     @ViewBuilder private var dashboard: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("工作很重要，\n你也是。") .font(.system(size: 35, weight: .semibold, design: .rounded)).lineSpacing(5)
-            Text("不用一下子改变生活。先从照顾此刻的自己开始。").foregroundStyle(.secondary).padding(.top, 5)
+            // 每日一句:温和的照顾型文案,按日期轮换,同一天不换。
+            Text(DailyQuotes.today()).foregroundStyle(.secondary).padding(.top, 5)
         }
         HStack(spacing: 24) {
             VStack(alignment: .leading, spacing: 15) {
