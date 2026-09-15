@@ -272,7 +272,12 @@ struct NapTabView: View {
         } else {
             mix.append(NapChannel(sound: sound, volume: 1))
             previewing = true
-            NapEngine.shared.start(sound: sound, volume: master)
+            // 整个组合一起启动:恢复出来的旧选中(或暂停中的各路)从来没播过,
+            // 只放新点的一路会出现「显示混音、实际只有一路出声」。对已在播的
+            // 播放器重复 play() 没有副作用,不会从头来。
+            for channel in mix {
+                NapEngine.shared.start(sound: channel.sound, volume: effectiveVolume(channel))
+            }
         }
     }
 
