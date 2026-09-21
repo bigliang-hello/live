@@ -461,8 +461,9 @@ private struct WoodFishCard: View {
                 .offset(x: 9, y: -7)
 
             WoodFishMallet()
-                .rotationEffect(.degrees(knockDown ? -25 : 0), anchor: .trailing)
-                .offset(x: 63, y: -72)
+                // 落槌只触及开口上沿，避免槌头陷入共鸣腔。
+                .rotationEffect(.degrees(knockDown ? -18 : 0), anchor: .trailing)
+                .offset(x: 63, y: -75)
 
             ZStack {
                 Capsule().frame(width: 3, height: 10).rotationEffect(.degrees(-28)).offset(x: -8)
@@ -470,7 +471,7 @@ private struct WoodFishCard: View {
                 Capsule().frame(width: 3, height: 10).rotationEffect(.degrees(28)).offset(x: 8)
             }
             .foregroundStyle(meritGold)
-            .offset(x: 26, y: -31)
+            .offset(x: 22, y: -43)
             .opacity(knockDown ? 0.8 : 0)
         }
         .frame(width: 210, height: 176)
@@ -490,7 +491,7 @@ private struct WoodFishCard: View {
             }
         }
 
-        let blessing = Blessing(id: UUID(), x: CGFloat.random(in: -48 ... 48))
+        let blessing = Blessing(id: UUID(), x: CGFloat.random(in: -34 ... 34))
         blessings.append(blessing)
         Task {
             try? await Task.sleep(for: .seconds(1))
@@ -530,13 +531,28 @@ private struct BlessingText: View {
     @State private var risen = false
 
     var body: some View {
-        Text("功德 +1")
-            .font(.system(size: 13, weight: .semibold, design: .rounded))
-            .foregroundStyle(meritGold)
-            .offset(x: x, y: risen ? -54 : -4)
+        HStack(spacing: 5) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 9, weight: .bold))
+            Text("功德 +1")
+                .font(.system(size: 12, weight: .semibold, design: .rounded))
+        }
+            .foregroundStyle(woodDeep)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(.white.opacity(0.94), in: Capsule())
+            .overlay {
+                Capsule().stroke(meritGold.opacity(0.34), lineWidth: 1)
+            }
+            .shadow(color: woodDeep.opacity(0.13), radius: 5, y: 2)
+            .scaleEffect(risen ? 1.03 : 0.92)
+            .offset(x: x, y: risen ? -112 : -76)
             .opacity(risen ? 0 : 1)
             .onAppear {
-                withAnimation(.easeOut(duration: 0.9)) { risen = true }
+                Task {
+                    try? await Task.sleep(for: .milliseconds(140))
+                    withAnimation(.easeOut(duration: 0.72)) { risen = true }
+                }
             }
     }
 }

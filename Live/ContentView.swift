@@ -1,4 +1,5 @@
 import SwiftUI
+import LunarSwift
 
 private let ink = Color(red: 0.12, green: 0.26, blue: 0.24)
 private let green = Color(red: 0.18, green: 0.43, blue: 0.35)
@@ -34,9 +35,16 @@ struct ContentView: View {
             HStack(spacing: 0) {
             sidebar
             VStack(alignment: .leading, spacing: 0) {
-                HStack {
+                HStack(spacing: 16) {
                     Text(page.rawValue).font(.headline)
                     Spacer()
+                    if page == .today {
+                        Button { page = .almanac } label: {
+                            SolarTermBadge(date: .now)
+                        }
+                        .buttonStyle(.plain)
+                        .help("查看今日黄历")
+                    }
                     Text(Date.now.formatted(
                         .dateTime
                             .locale(Locale(identifier: "zh_CN"))
@@ -764,6 +772,59 @@ struct ContentView: View {
             guard record.kind == "water", let amount = record.amount else { return title }
             return "\(title) · \(amount) ml"
         }
+    }
+}
+
+/// 首页顶栏的节气速览。节气当天突出“今日交节”，平日显示下一节气倒计时。
+private struct SolarTermBadge: View {
+    let date: Date
+
+    private var status: (current: String, detail: String) {
+        let solar = Solar.fromDate(date: date)
+        let lunar = solar.lunar
+        if !lunar.jieQi.isEmpty {
+            return (lunar.jieQi, "今日交节")
+        }
+
+        let current = lunar.prevJieQi
+        let next = lunar.nextJieQi
+        let days = max(0, next.solar.subtract(solar: solar))
+        let detail = days == 0 ? "今日 · \(next.name)" : "\(days)天后 · \(next.name)"
+        return (current.name, detail)
+    }
+
+    var body: some View {
+        let status = status
+        HStack(spacing: 9) {
+            Image(systemName: "sun.horizon.fill")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(green)
+                .frame(width: 28, height: 28)
+                .background(green.opacity(0.1), in: Circle())
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(status.current)
+                    .font(.system(size: 12, weight: .semibold, design: .rounded))
+                    .foregroundStyle(ink)
+                Text(status.detail)
+                    .font(.system(size: 9.5, weight: .medium))
+                    .foregroundStyle(ink.opacity(0.48))
+            }
+
+            Image(systemName: "chevron.right")
+                .font(.system(size: 8, weight: .bold))
+                .foregroundStyle(green.opacity(0.45))
+        }
+        .padding(.leading, 7)
+        .padding(.trailing, 10)
+        .padding(.vertical, 6)
+        .background(.white.opacity(0.72), in: Capsule())
+        .overlay {
+            Capsule().stroke(green.opacity(0.12), lineWidth: 1)
+        }
+        .contentShape(Capsule())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("当前节气 \(status.current)，\(status.detail)，查看今日黄历")
     }
 }
 
