@@ -5,9 +5,9 @@ private let green = Color(red: 0.18, green: 0.43, blue: 0.35)
 private let paper = Color(red: 0.95, green: 0.97, blue: 0.95)
 
 enum Page: String, CaseIterable {
-    case today = "今日照顾", reminders = "提醒计划", guide = "健康指南", nap = "小憩"
+    case today = "今日照顾", reminders = "提醒计划", guide = "健康指南", nap = "小憩", almanac = "今日黄历", decompress = "解压"
     var icon: String {
-        switch self { case .today: "sun.max"; case .reminders: "bell"; case .guide: "book.closed"; case .nap: "moon.zzz.fill" }
+        switch self { case .today: "sun.max"; case .reminders: "bell"; case .guide: "book.closed"; case .nap: "moon.zzz.fill"; case .almanac: "calendar"; case .decompress: "party.popper.fill" }
     }
     var caption: String {
         switch self {
@@ -15,6 +15,8 @@ enum Page: String, CaseIterable {
         case .reminders: "找到适合自己的节奏。"
         case .guide: "给健康多一点了解。"
         case .nap: "给耳朵一处安静的地方。"
+        case .almanac: "顺着天时过日子。"
+        case .decompress: "爽完再开工。"
         }
     }
 }
@@ -26,8 +28,10 @@ struct ContentView: View {
     @State private var pendingDelete: CustomReminder?
     @State private var loginItem = LoginItem.shared
     @State private var updater = UpdateChecker.shared
+    @State private var showQuoteSplash = false
     var body: some View {
-        HStack(spacing: 0) {
+        ZStack {
+            HStack(spacing: 0) {
             sidebar
             VStack(alignment: .leading, spacing: 0) {
                 HStack {
@@ -55,6 +59,8 @@ struct ContentView: View {
                             case .today: dashboard
                             case .reminders: reminderSettings
                             case .guide: GuideView()
+                            case .almanac: AlmanacTabView()
+                            case .decompress: DecompressView()
                             default: EmptyView()
                             }
                         }.padding(36).frame(maxWidth: 1100, alignment: .leading).frame(maxWidth: .infinity)
@@ -75,6 +81,31 @@ struct ContentView: View {
                 .animation(.spring(response: 0.42, dampingFraction: 0.85), value: store.toast)
         }.foregroundStyle(ink).tint(green).frame(minWidth: 900, minHeight: 680)
             .preferredColorScheme(.light)
+
+            // 每日一句开屏:盖在整窗最上层,点「收下」或 9 秒后自动收场。
+            if showQuoteSplash {
+                QuoteSplash(text: DailyQuotes.today()) {
+                    withAnimation(.easeIn(duration: 0.28)) { showQuoteSplash = false }
+                }
+                .transition(.opacity.combined(with: .scale(scale: 1.05)))
+                .zIndex(10)
+            }
+        }
+        .onAppear(perform: checkDailyQuoteSplash)
+        // 常驻场景:窗口整夜开着不会重建视图,onAppear 不再触发;
+        // 每次切回前台补查一次,保证「每天第一次看到主页」都能播。
+        // macOS 上 scenePhase 不随前后台变化,要听系统的激活通知。
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            checkDailyQuoteSplash()
+        }
+    }
+
+    /// 每天第一次展示主窗口时,放一次每日一句的全屏动画;当天内重开不再放。
+    private func checkDailyQuoteSplash() {
+        let day = Calendar.current.startOfDay(for: .now).timeIntervalSince1970 / 86_400
+        guard UserDefaults.standard.double(forKey: "quote.splashDay") != day else { return }
+        UserDefaults.standard.set(day, forKey: "quote.splashDay")
+        showQuoteSplash = true
     }
     private var sidebar: some View {
         VStack(alignment: .leading, spacing: 36) {
@@ -214,30 +245,8 @@ struct ContentView: View {
         }
     }
     @ViewBuilder private var dashboard: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("工作很重要，\n你也是。") .font(.system(size: 35, weight: .semibold, design: .rounded)).lineSpacing(5)
-            // 每日一句:温和的照顾型文案,按日期轮换,同一天不换。
-            Text(DailyQuotes.today()).foregroundStyle(.secondary).padding(.top, 5)
-        }
-        HStack(spacing: 24) {
-            VStack(alignment: .leading, spacing: 15) {
-                Text("TODAY · 今日的小小积累").font(.system(size: 10, weight: .semibold)).tracking(2)
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text("\(store.today.count)").font(.system(size: 60, weight: .light, design: .rounded)).contentTransition(.numericText())
-                    Text("次照顾自己").font(.title3)
-                }
-                Text(dashboardCaption).font(.callout)
-                Button { page = .reminders } label: { Label("安排我的提醒", systemImage: "arrow.right") }.buttonStyle(.plain).font(.callout.bold())
-            }
-            Spacer()
-            VStack(spacing: 2) {
-                PlantView(level: min(store.currentStreak, 6), todayCount: store.today.count).frame(width: 190, height: 185)
-                Text(plantCaption)
-                    .font(.system(size: 11))
-                    .foregroundStyle(ink.opacity(0.55))
-                    .frame(width: 190)
-            }
-        }.padding(28).background(Color(red: 0.85, green: 0.92, blue: 0.86), in: RoundedRectangle(cornerRadius: 22))
+        dashboardHeader
+        careSummaryCard
         HStack { Text("给身体一点回应").font(.title3.bold()); Spacer(); Text("按自己的节奏就好").font(.caption).foregroundStyle(.secondary) }
         HStack(alignment: .top, spacing: 14) {
             ForEach(store.reminders) { reminder in
@@ -279,25 +288,203 @@ struct ContentView: View {
             }.padding(22).background(.white, in: RoundedRectangle(cornerRadius: 18))
         }
     }
+
+    private var dashboardHeader: some View {
+        HStack(alignment: .bottom, spacing: 42) {
+            VStack(alignment: .leading, spacing: 8) {
+                Label("先把自己放回今天", systemImage: "leaf.fill")
+                    .font(.system(size: 10, weight: .semibold))
+                    .tracking(1.6)
+                    .foregroundStyle(green)
+
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("工作很重要，")
+                        .foregroundStyle(ink)
+                    Text("你也是。")
+                        .foregroundStyle(green)
+                        .background(alignment: .bottomLeading) {
+                            Capsule()
+                                .fill(green.opacity(0.11))
+                                .frame(width: 142, height: 11)
+                                .offset(y: 1)
+                        }
+                }
+                .font(.system(size: 38, weight: .semibold, design: .rounded))
+                .lineSpacing(3)
+            }
+
+            Spacer(minLength: 18)
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("今日一句")
+                    .font(.system(size: 10, weight: .semibold))
+                    .tracking(1.5)
+                    .foregroundStyle(green.opacity(0.8))
+                Text(DailyQuotes.today())
+                    .font(.system(size: 14, weight: .regular))
+                    .foregroundStyle(ink.opacity(0.62))
+                    .lineSpacing(4)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: 310, alignment: .leading)
+            .padding(.leading, 18)
+            .padding(.vertical, 5)
+            .overlay(alignment: .leading) {
+                Capsule()
+                    .fill(green.opacity(0.22))
+                    .frame(width: 2)
+            }
+        }
+        .padding(.horizontal, 4)
+        .padding(.top, 2)
+        .padding(.bottom, 4)
+    }
+
+    private var careSummaryCard: some View {
+        HStack(spacing: 26) {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(spacing: 8) {
+                    Text("今日照顾")
+                        .font(.system(size: 11, weight: .semibold))
+                        .tracking(1.4)
+                    Text(store.today.isEmpty ? "等待第一次回应" : "正在积累")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(green)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 4)
+                        .background(.white.opacity(0.58), in: Capsule())
+                }
+
+                HStack(alignment: .lastTextBaseline, spacing: 9) {
+                    Text("\(store.today.count)")
+                        .font(.system(size: 64, weight: .light, design: .rounded))
+                        .contentTransition(.numericText())
+                    Text("次")
+                        .font(.system(size: 18, weight: .medium, design: .rounded))
+                        .foregroundStyle(ink.opacity(0.72))
+                }
+
+                Text(dashboardCaption)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(ink.opacity(0.72))
+
+                growthProgress
+
+                Button { page = .reminders } label: {
+                    HStack(spacing: 8) {
+                        Text("安排我的提醒")
+                        Image(systemName: "arrow.right")
+                            .font(.system(size: 11, weight: .bold))
+                    }
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 15)
+                    .frame(height: 36)
+                    .background(green, in: Capsule())
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("前往提醒计划")
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Rectangle()
+                .fill(green.opacity(0.11))
+                .frame(width: 1, height: 190)
+
+            VStack(spacing: 4) {
+                HStack(spacing: 6) {
+                    Image(systemName: "leaf.fill")
+                        .font(.system(size: 10))
+                    Text("本周植物")
+                        .font(.system(size: 11, weight: .semibold))
+                    Spacer()
+                    Text("\(min(store.weekCareDays, 5))/5")
+                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(.white.opacity(0.58), in: Capsule())
+                }
+                .foregroundStyle(green)
+                .frame(width: 190)
+
+                PlantGrowthView(caredDays: store.weekCareDays)
+                    .frame(width: 190, height: 158)
+
+                Text(plantCaption)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(ink.opacity(0.52))
+                    .frame(width: 190)
+            }
+        }
+        .padding(.horizontal, 30)
+        .padding(.vertical, 24)
+        .background {
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color(red: 0.82, green: 0.91, blue: 0.84),
+                            Color(red: 0.89, green: 0.95, blue: 0.90)
+                        ],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                )
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .stroke(.white.opacity(0.55), lineWidth: 1)
+        }
+        .shadow(color: green.opacity(0.07), radius: 18, y: 8)
+    }
+
+    private var growthProgress: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack {
+                Text("本周成长")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(ink.opacity(0.54))
+                Spacer()
+                Text("第 \(min(store.weekCareDays, 5)) 阶段")
+                    .font(.system(size: 10, weight: .medium, design: .rounded))
+                    .foregroundStyle(green)
+            }
+
+            HStack(spacing: 7) {
+                ForEach(1...5, id: \.self) { stage in
+                    Capsule()
+                        .fill(stage <= store.weekCareDays ? green : .white.opacity(0.68))
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 7)
+                }
+            }
+        }
+        .frame(maxWidth: 300)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("本周植物成长第 \(min(store.weekCareDays, 5)) 阶段，共五个阶段")
+    }
     private var dashboardCaption: String {
         if store.currentStreak >= 2 {
-            return "连续照顾自己第 \(store.currentStreak) 天，本周 \(store.weekCareDays)/7 天。"
+            return "连续照顾自己第 \(store.currentStreak) 天，植物成长 \(min(store.weekCareDays, 5))/5。"
         }
         if store.weekCareDays >= 1 {
-            return "本周已照顾自己 \(store.weekCareDays) 天，每一次都算数。"
+            return "本周已照顾自己 \(store.weekCareDays) 天，植物成长 \(min(store.weekCareDays, 5))/5。"
         }
         return "今天的第一份照顾，就从现在开始。"
     }
 
-    /// 植物旁的小提示：让人知道它跟着连续天数长大。
+    /// 植物按本周有照顾记录的天数成长，五天达到最大形态。
     private var plantCaption: String {
-        if store.currentStreak == 0 {
-            return "今天照顾自己一次，它就会发芽"
+        let caredDays = min(store.weekCareDays, 5)
+        if caredDays == 0 {
+            return "本周照顾自己一次，它就会发芽"
         }
-        if store.currentStreak >= 6 {
-            return "已连续照顾 \(store.currentStreak) 天，它开出了花"
+        if caredDays == 5 {
+            return "本周照顾满 5 天，它长到最好了"
         }
-        return "已连续照顾 \(store.currentStreak) 天，它在慢慢长大"
+        return "本周照顾 \(caredDays) 天 · 成长 \(caredDays)/5"
     }
 
     @ViewBuilder private var reminderSettings: some View {
@@ -649,86 +836,38 @@ private struct SidebarReminderButtonStyle: ButtonStyle {
     }
 }
 
-struct PlantView: View {
-    /// 连续照顾天数对应的成长阶段，0–6。
-    let level: Int
-    let todayCount: Int
+private struct PlantGrowthView: View {
+    let caredDays: Int
 
-    private let green = Color(red: 0.18, green: 0.43, blue: 0.35)
-    private let deepGreen = Color(red: 0.36, green: 0.58, blue: 0.40)
+    private var stage: Int {
+        min(max(caredDays, 1), 5)
+    }
 
     var body: some View {
         ZStack {
-            Circle().fill(.white.opacity(0.32)).frame(width: 170)
-            plant
-            pot
+            Circle()
+                .fill(.white.opacity(0.18))
+                .frame(width: 160, height: 160)
+
+            Image("PlantGrowth\(stage)")
+                .resizable()
+                .scaledToFit()
+                .padding(.horizontal, 3)
+                .padding(.vertical, 1)
         }
+        .frame(width: 190, height: 175)
+        .saturation(caredDays == 0 ? 0.72 : 1)
+        .opacity(caredDays == 0 ? 0.82 : 1)
+        .id(stage)
+        .transition(.opacity.combined(with: .scale(scale: 0.98)))
+        .animation(.easeInOut(duration: 0.35), value: stage)
         .accessibilityLabel(accessibilityText)
     }
 
-    private var stemTop: CGFloat {
-        148 - (18 + CGFloat(level) * 18)
-    }
-
-    @ViewBuilder private var plant: some View {
-        if level == 0 {
-            // 刚破土的小芽
-            Circle().fill(green).frame(width: 9, height: 9).position(x: 97, y: 143)
-            Ellipse().fill(green).frame(width: 17, height: 8).rotationEffect(.degrees(-32)).position(x: 90, y: 137)
-        } else {
-            Path { path in
-                path.move(to: CGPoint(x: 97, y: 148))
-                path.addQuadCurve(to: CGPoint(x: 94, y: stemTop), control: CGPoint(x: 102, y: (148 + stemTop) / 2))
-            }
-            .stroke(green, style: StrokeStyle(lineWidth: 4, lineCap: .round))
-
-            ForEach(0..<min(level, 5), id: \.self) { index in
-                let leafCount = min(level, 5)
-                let ratio = Double(index + 1) / Double(leafCount + 1)
-                let y = 148 - ratio * (148 - stemTop - 10)
-                let side: CGFloat = index.isMultiple(of: 2) ? -1 : 1
-                let size: CGFloat = 36 + CGFloat(index % 3) * 7
-                Ellipse()
-                    .fill(index.isMultiple(of: 2) ? green : deepGreen)
-                    .frame(width: size, height: size / 2.2)
-                    .rotationEffect(.degrees(Double(side) * (28 + CGFloat(index) * 4)))
-                    .position(x: 97 + side * (size / 2.4 + 3), y: y)
-            }
-
-            if level >= 6 {
-                Circle().fill(green.opacity(0.2)).frame(width: 26).position(x: 94, y: stemTop - 2)
-                Circle().fill(green).frame(width: 11).position(x: 94, y: stemTop - 2)
-            }
-        }
-        if todayCount > 0, level > 0 {
-            // 今天长出的新叶
-            Ellipse()
-                .fill(green.opacity(0.85))
-                .frame(width: 30, height: 14)
-                .rotationEffect(.degrees(-18))
-                .position(x: 116, y: stemTop + 14)
-        }
-    }
-
-    private var pot: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 9)
-                .fill(Color(red: 0.72, green: 0.79, blue: 0.67))
-                .frame(width: 55, height: 39)
-                .position(x: 97, y: 157)
-            Ellipse()
-                .fill(Color(red: 0.55, green: 0.47, blue: 0.38).opacity(0.55))
-                .frame(width: 47, height: 10)
-                .position(x: 97, y: 140)
-        }
-    }
-
     private var accessibilityText: String {
-        if level == 0 {
-            return todayCount > 0 ? "今天已有照顾，小植物即将发芽" : "等待第一份照顾的小种子"
+        guard caredDays > 0 else {
+            return "等待本周第一次照顾的植物幼芽"
         }
-        var text = "被连续照顾 \(level) 天、越长越大的小植物"
-        if todayCount > 0 { text += "，今天又长出了新叶" }
-        return text
+        return "本周已照顾 \(min(caredDays, 5)) 天，植物处于第 \(stage) 个成长阶段"
     }
 }
